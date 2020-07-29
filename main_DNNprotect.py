@@ -7,8 +7,8 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from util import util
-import mnist_cnn, embed_net
-from mnist_cnn import MNIST_CNN_Net
+import mnist_cnn_net, embed_net
+from mnist_cnn_net import MNIST_CNN_Net
 from embed_net import EmbedNet
 from torchsummary import summary
 import setting
@@ -71,9 +71,9 @@ def main():
         #step1: let entropy shrink
         scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
         for epoch in range(1, args.epochs + 1):
-            curr_entropy = mnist_cnn.train(args, model, device, train_loader, optimizer, epoch)
+            curr_entropy = mnist_cnn_net.train(args, model, device, train_loader, optimizer, epoch)
             print("Curr entropy: "+str(curr_entropy))
-            mnist_cnn.test(model, device, test_loader)
+            mnist_cnn_net.test(model, device, test_loader)
             scheduler.step()
     else:
         pretrained_dict = torch.load('mnist_cnn.pt')
@@ -99,17 +99,32 @@ def main():
     weight_num = 64*32*3*3
     watermark = [1.0]*setting.water_len
     modified_weights.append(watermark)
+    sum_len = len(modified_weights)
     #step2: EmbedNet - hiding data via NN
-    model2 = EmbedNet.to(device,weight_num+setting.water_len,weight_num+setting.water_len)
+    model2 = EmbedNet(sum_len,sum_len,sum_len,sum_len,weight_num).to(device)
     if not skipCNNTrainStage:
+        # Generate database that provides rand sequences with given entropy
+        # Train a network that turns rand() into seq that has given entropy
+
+        # Move the following codes to RandEntroDataset.py
+        rand_entropy_net = RandEntroNet()
+        pretrained_dict = torch.load('rand_entropy_gen.pt')
+        model1_dict = rand_entropy_net.state_dict()
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model1_dict}
+        model1_dict.update(pretrained_dict)
+        rand_entropy_net.load_state_dict(model1_dict)
+        rand_entropy_net = rand_entropy_net.cuda()
+
+
+
         optimizer = optim.Adadelta(model2.parameters(), lr=args.lr)
 
         #step1: let entropy shrink
         scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
         for epoch in range(1, args.epochs + 1):
-            curr_entropy = mnist_cnn.train(args, model, device, train_loader, optimizer, epoch)
+            curr_entropy = mnist_cnn_net.train(args, model, device, train_loader, optimizer, epoch)
             print("Curr entropy: "+str(curr_entropy))
-            mnist_cnn.test(model, device, test_loader)
+            mnist_cnn_net.test(model, device, test_loader)
             scheduler.step()
     else:
         pretrained_dict = torch.load('mnist_cnn.pt')
