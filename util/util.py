@@ -1,6 +1,6 @@
 import numpy as np
 from math import log
-
+import setting
 
 def entropy_calculate(histogram):
     hist_sum = sum(histogram)
@@ -11,7 +11,7 @@ def entropy_calculate(histogram):
             entropy -= ratio*log(ratio,2)
     return entropy
 
-def get_histogram(params=np.array([[1,2],[3,4]]),num_bins=256,isPrint=False):
+def get_histogram(params=np.array([[1,2],[3,4]]),num_bins=setting.default_bin_num,isPrint=False):
     params_min, params_max = params.min(), params.max()+0.01
 
     gate = (params_max - params_min) / num_bins

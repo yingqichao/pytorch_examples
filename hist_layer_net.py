@@ -2,6 +2,7 @@ from __future__ import print_function
 import json
 import argparse
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -20,16 +21,16 @@ lamb = 0.01 # 0.001 maybe is too small,loss is usually 0.006
 # opt['manual_seed']
 
 # target_entropy = 6.60
-class RandEntroNet(nn.Module):
-    def __init__(self,input_dim,hidden1_dim):
-        super(RandEntroNet, self).__init__()
+class HistogramLayerNet(nn.Module):
+    def __init__(self,input_dim,hidden1_dim,bin_num=setting.default_bin_num):
+        super(HistogramLayerNet, self).__init__()
 
         self.feature_layer = nn.Sequential(
             nn.Linear(input_dim, hidden1_dim),  # layer 1
             nn.LeakyReLU(),
             nn.Linear(hidden1_dim, hidden1_dim),  # layer 2
             nn.LeakyReLU(),
-            nn.Linear(hidden1_dim, input_dim),  # layer 2
+            nn.Linear(hidden1_dim, bin_num),  # layer 2
             nn.LeakyReLU(),
         )
 
@@ -40,7 +41,7 @@ class RandEntroNet(nn.Module):
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
-    entropy = 0
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -54,53 +55,48 @@ def train(args, model, device, train_loader, optimizer, epoch):
         # entropy = util.entropy_calculate(histogram)
         # loss_entropy = lamb * entropy
         #Entropy range:(6.6~7.0)
+        loss = F.mse_loss(output, target)
 
 
-        entropy = [0]*len(target)
-        for i in range(len(output)):
-            histogram = util.get_histogram(output.clone().cpu().detach().numpy()[i])
-            entropy[i] = util.entropy_calculate(histogram)
-        entroLoss = F.mse_loss(torch.tensor(entropy).cuda(),target).item()
-
-        loss = (1+F.mse_loss(output,output))*entroLoss  # 不可导！
         ###
         # loss = my_entropy_loss().forward(output,target)
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}  Entropy Ave: {:2.4f})'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}  )'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item(),sum(entropy)/len(entropy)))
+                100. * batch_idx / len(train_loader), loss.item()))
             if args.dry_run:
                 break
 
-    return entropy
 
 
 def test(model, device, test_loader):
     model.eval()
     test_loss = 0
-    correct = 0
+    output, target = None, None
     with torch.no_grad():
+
         for data, target in test_loader:
+
             data, target = data.to(device), target.to(device)
             output = model(data)
             # test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
-            entropy = [0] * len(target)
-            for i in range(len(output)):
-                histogram = util.get_histogram(output.clone().cpu().detach().numpy()[i])
-                entropy[i] = util.entropy_calculate(histogram)
-            loss = F.mse_loss(torch.tensor(entropy).cuda(), target)
-            test_loss += loss
+            test_loss += F.mse_loss(output, target)
             # pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
 
-            correct += sum([1 if abs(entropy[i]-target[i])<0.1 else 0 for i in range(len(target))])
+            # correct += sum([1 if abs(entropy[i]-target[i])<0.1 else 0 for i in range(len(target))])
 
     test_loss /= len(test_loader.dataset)
 
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
+    print('\nTest set: Average loss: {:.4f}\n'.format(
+        test_loss))
+    #show result
+    print("Expected:")
+    print(target.clone().detach().cpu().numpy())
+    print("Real:")
+    print(np.round(output.clone().detach().cpu().numpy()))
+
 
 def self_defined_entropy_loss(output,target_entropy):
     # 期望output本身满足熵为entropy
@@ -148,17 +144,20 @@ def main():
     train_loader = DataLoader(dataset=train_data, batch_size=32, shuffle=True, num_workers=4)
     test_loader = DataLoader(dataset=test_data, batch_size=32, shuffle=True, num_workers=4)
 
-    model = RandEntroNet(setting.carrier_weight_num,setting.carrier_weight_num).to(device)
+    model = HistogramLayerNet(input_dim=setting.carrier_weight_num,hidden1_dim=1024).to(device)
 
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
 
     # step1: let entropy shrink
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
-        curr_entropy = train(args, model, device, train_loader, optimizer, epoch)
-        print("Curr entropy: " + str(curr_entropy))
+        train(args, model, device, train_loader, optimizer, epoch)
+
         test(model, device, test_loader)
         scheduler.step()
+
+    # show result:
+
 
 if __name__ == '__main__':
     main()
